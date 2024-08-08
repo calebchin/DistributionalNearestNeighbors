@@ -25,12 +25,13 @@ class NNImputer(object):
 
     # should introduce validation for parameter ranges
     def set_etaspace(self, eta_space):
-      """
-      Parameters:
-      -----------
-      eta_space : a hyperopt parameter space object (hyperopt.uniform, hyperopt.loguniform, etc.)
-      """
-      self.eta_space = eta_space
+        """
+        Parameters:
+        -----------
+        eta_space : a hyperopt parameter space object (hyperopt.uniform, hyperopt.loguniform, etc.)
+        """
+        self.eta_space = eta_space
+
     # Helpers / data validation
     def _validate_inputs(self, Z: np.array, M: np.array):
         if len(Z.shape) != 4:
@@ -136,7 +137,6 @@ class NNImputer(object):
             k = self.k
         folds = np.array_split(obvs_inds, k, axis=0)
 
-        
         tot_error = 0
         final_k = k
         for j in range(k):
@@ -166,7 +166,9 @@ class NNImputer(object):
                 final_ests = [cv_Z_est[inds][i] for i in folds_inds]
 
             # compute avg error over estimates
-            err = self.avg_error(final_ests, ground_truth, inds = np.arange(0, len(folds_inds)))
+            err = self.avg_error(
+                final_ests, ground_truth, inds=np.arange(0, len(folds_inds))
+            )
 
             # TODO: think about this behavior - if fold error is nan, what to do?
             if not np.isnan(err):

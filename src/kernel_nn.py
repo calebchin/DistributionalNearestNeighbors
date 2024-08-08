@@ -110,9 +110,8 @@ class KernelNN(NNImputer):
             val = 0
         return val
 
-    def estimate(self, Z, M, eta, inds, dists, ret_nn = False, *args, **kwargs):
-        """
-        """
+    def estimate(self, Z, M, eta, inds, dists, ret_nn=False, *args, **kwargs):
+        """ """
         N, T, n, d = Z.shape
         Z_cp = Z.copy()
         Z_cp[M == 0] = np.nan
@@ -205,8 +204,8 @@ class KernelNN(NNImputer):
         num_val = len(inds)
         for val in inds:
             est_val = ests[val]
-            if (np.any(np.isinf(est_val * - 1))):
-                #print("No neighbors")
+            if np.any(np.isinf(est_val * -1)):
+                # print("No neighbors")
                 err_onecell = np.nan
             else:
                 err_onecell = self._sqmmd_est2(est_val, truth[val])
