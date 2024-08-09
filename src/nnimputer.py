@@ -2,6 +2,7 @@ import numpy as np
 
 import hyperopt as hp
 from hyperopt import Trials, fmin, tpe
+from datetime import datetime
 
 
 class NNImputer(object):
@@ -9,11 +10,33 @@ class NNImputer(object):
         self,
         nn_type="ii",
         eta_axis=0,
-        eta_space=None,
+        eta_space=hp.uniform('eta', 0, 1),
         search_algo=tpe.suggest,
         k=None,
         rand_seed=None,
     ):
+        """
+        Parameters:
+        -----------
+        nn_type : string in ("ii", "uu")
+                  represents the type of nearest neighbors to use
+                  "ii" is "item-item" nn, which is column-wise
+                  "uu" is "user-user" nn, which is row-wise. The default value is
+                  "ii". 
+        eta_axis : integer in [0, 1].
+                   Indicates which axis to compute the eta search over. If eta search is
+                   done via blocks (i.e. not row-wise or column-wise), then this parameter is ignored.
+                   The default is 0.
+        eta_space : a hyperopt hp search space
+                    for example: hp.uniform('eta', 0, 1). If no eta_space is inputted,
+                    then this example will be the default search space.
+        search_algo : a hyperopt algorithm
+                      for example: tpe.suggest, default is tpe.suggest.
+        k : integer > 1, the number of folds in k-fold cross validation over.
+            If k = None (default), the LOOCV is used. 
+        rand_seed : the random seed to be used for reproducible results. 
+                    If None is used (default), then the system time is used (not reproducible)
+        """
         self.nn_type = nn_type
         self.eta_axis = eta_axis
         # note: subclasses should handle the default eta space in some way
@@ -128,6 +151,8 @@ class NNImputer(object):
         # shuffle inds
         if not (self.rand_seed is None):
             np.random.seed(seed=self.rand_seed)
+        else:
+            np.random.seed(seed=datetime.now().timestamp())
         np.random.shuffle(obvs_inds)
 
         # split obvs inds into k folds

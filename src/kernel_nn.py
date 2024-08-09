@@ -1,6 +1,7 @@
 from nnimputer import NNImputer
 import numpy as np
 from hyperopt import fmin, Trials, tpe
+from hyperopt import hp
 
 
 class KernelNN(NNImputer):
@@ -12,7 +13,7 @@ class KernelNN(NNImputer):
         kernel="exponential",
         nn_type="ii",
         eta_axis=0,
-        eta_space=None,
+        eta_space=hp.uniform('eta', 0, 1),
         search_algo=tpe.suggest,
         k=None,
         rand_seed=None,
@@ -20,7 +21,23 @@ class KernelNN(NNImputer):
         """
         Parameters:
         -----------
-
+        kernel : string in valid_kernels
+        nn_type : string in ("ii", "uu")
+            represents the type of nearest neighbors to use
+            "ii" is "item-item" nn, which is column-wise
+            "uu" is "user-user" nn, which is row-wise
+        eta_axis : integer in [0, 1].
+                   Indicates which axis to compute the eta search over. If eta search is
+                   done via blocks (i.e. not row-wise or column-wise), then this parameter is ignored
+        eta_space : a hyperopt hp search space
+                    for example: hp.uniform('eta', 0, 1). If no eta_space is inputted,
+                    then this example will be the default search space.
+        search_algo : a hyperopt algorithm
+                      for example: tpe.suggest, default is tpe.suggest.
+        k : integer > 1, the number of folds in k-fold cross validation over.
+            If k = None (default), the LOOCV is used. 
+        rand_seed : the random seed to be used for reproducible results. 
+                    If None is used (default), then the system time is used (not reproducible)
         """
         if kernel not in self.valid_kernels:
             raise ValueError(
@@ -111,7 +128,25 @@ class KernelNN(NNImputer):
         return val
 
     def estimate(self, Z, M, eta, inds, dists, ret_nn=False, *args, **kwargs):
-        """ """
+        """
+        Estimate entries in inds using entries M = 1 and an eta-neighborhood
+
+        Parameters:
+        ----------
+        Z : np.array of shape (N, T, d)
+            The data matrix.
+        M : np.array of shape (N, T)
+            The missingness/treatment assignment pattern
+        eta : the threshold for the neighborhood
+        inds : an array-like of indices into Z that will be estimated
+        dists : the row/column distances of Z
+
+        Returns:
+        --------
+        est : an np.array of shape (N, T, d) that consists of the estimates
+              at inds.
+
+        """
         N, T, n, d = Z.shape
         Z_cp = Z.copy()
         Z_cp[M == 0] = np.nan
@@ -161,6 +196,15 @@ class KernelNN(NNImputer):
     def distances(self, Z, M, *args, **kwargs):
         """
         Compute the MMD distances between rows/columns
+
+        Parameters:
+        -----------
+        Z : np.array of shape (N, T, n, d)
+        M : np.array of shape (N, T)
+
+        Returns:
+        --------
+        dists : np.array of shape (N, N) if nn_type is uu, (T, T) if nn_type is ii
         """
         Z_cp = Z.copy()
         N, T, n, d = Z_cp.shape
@@ -193,8 +237,7 @@ class KernelNN(NNImputer):
         ----------
         ests : list of estimated entries (the entries may be of varying size)
         truth : vector of n x d entries (length must be the same as ests)
-        kernel : the kernel to use in the MMD^2 estimate. Supported kernels:
-                linear, square, gaussian (untuned).
+        inds : a list of indices into ests to compare across to truth
 
         Returns:
         --------
