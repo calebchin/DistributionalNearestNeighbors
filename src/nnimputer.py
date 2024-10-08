@@ -1,7 +1,7 @@
 import numpy as np
 
-import hyperopt as hp
-from hyperopt import Trials, fmin, tpe
+
+from hyperopt import hp, Trials, fmin, tpe
 from datetime import datetime
 
 
@@ -24,9 +24,11 @@ class NNImputer(object):
                   "uu" is "user-user" nn, which is row-wise. The default value is
                   "ii". 
         eta_axis : integer in [0, 1].
-                   Indicates which axis to compute the eta search over. If eta search is
-                   done via blocks (i.e. not row-wise or column-wise), then this parameter is ignored.
-                   The default is 0.
+                   The axis to compute etas.
+                   Default is 0. 
+                   - If 0, then etas are computed for every row 
+                   - If 1, then etas are computed for every column.
+                   - If -1, then a single eta is computed using cv
         eta_space : a hyperopt hp search space
                     for example: hp.uniform('eta', 0, 1). If no eta_space is inputted,
                     then this example will be the default search space.
@@ -39,8 +41,6 @@ class NNImputer(object):
         """
         self.nn_type = nn_type
         self.eta_axis = eta_axis
-        # note: subclasses should handle the default eta space in some way
-        # max
         self.eta_space = eta_space
         self.search_algo = search_algo
         self.k = k
@@ -132,27 +132,59 @@ class NNImputer(object):
         ----------
         avg_error : the average error of estimates over k validation folds
         """
-        # k = 1 not well defined
-        # if k == 1:
-        #     raise ValueError(
-        #         "1-Fold CV is not supported as some neighbors must be observed along the axis of interest."
-        #     )
+        if not (self.rand_seed is None):
+            np.random.seed(seed=self.rand_seed)
+        else:
+            np.random.seed(seed=datetime.now().timestamp())
 
-        # currently don't support block inds
-        if type(inds).__module__ == np.__name__:
-            raise NotImplementedError("Block eta tuning coming soon!")
+        if self.eta_axis == -1:
+            obvs_inds = np.nonzero(M == 1)
+            sel_inds = np.arange(len(obvs_inds[0]))
+            k = self.k if self.k is not None else len(sel_inds)
+            np.random.shuffle(sel_inds)
+            fold_sels = np.array_split(sel_inds, k)
+            
+            tot_error = 0
+            final_k = k
+            for j in range(k):
+                cv_mask = M.copy()
+                cv_Z = Z.copy()
+                holdout_inds = (obvs_inds[0][fold_sels[j]], obvs_inds[1][fold_sels[j]])
+                ground_truth = cv_Z[holdout_inds]
+                cv_Z[holdout_inds] = np.nan
+                cv_mask[holdout_inds] = 0
+                flattened_inds = []
+                for b in range(len(holdout_inds[0])):
+                    flattened_inds.append((holdout_inds[0][b], holdout_inds[1][b]))
+                cv_Z_est = self.estimate(
+                    cv_Z, cv_mask, inds = flattened_inds, dists = dists, eta = eta
+                )
+                final_ests = []
+                for c, d in flattened_inds:
+                    final_ests.append(cv_Z_est[c][d])
+                err = self.avg_error(
+                    final_ests, ground_truth, inds=np.arange(0, len(holdout_inds[0]))
+                )
+            if not np.isnan(err):
+                notnan = True
+                tot_error += err
+            else:
+                final_k -= 1
+            # none of the folds returned nonnan error
+            if final_k == 0:
+                return np.inf
+                # currently discard folds with nan error
+            return tot_error / final_k
+
 
         # eta search per row (default)
-        if self.eta_axis == 0:
+        elif self.eta_axis == 0:
             obvs_inds = np.nonzero(M[inds] == 1)[0]
         elif self.eta_axis == 1:
             obvs_inds = np.nonzero(M[:, inds] == 1)[0]
 
         # shuffle inds
-        if not (self.rand_seed is None):
-            np.random.seed(seed=self.rand_seed)
-        else:
-            np.random.seed(seed=datetime.now().timestamp())
+
         np.random.shuffle(obvs_inds)
 
         # split obvs inds into k folds
@@ -249,31 +281,45 @@ class NNImputer(object):
         )
 
         return best_eta["eta"] if not ret_trials else (best_eta["eta"], trials)
-
-    def _row_eta(self, Z: np.array, M: np.array):
+    
+    def _one_eta(self, Z : np.array, M : np.array, dists):
         """
         Z : N x T x n x d
         M : N x T
+        dists : columnwise or row-wise distances
 
         Returns:
-        etas : array of size N)
+        eta : a tuned eta
         """
-        N, _, _, _ = Z.shape
-        etas = np.full([N], np.nan)
-        for i in range(N):
-            # sample split for cv dists
-            s_Mask = M.copy()
-            s_Mask[i] = 0
-            # compute sample split distances
-            cv_dists = self.distances(Z, s_Mask, axis=1)
 
-            etas[i] = self.search_eta(Z, M, i, cv_dists)
-        return etas
-
-    def _col_eta(self, Z: np.array, M: np.array):
+    def _axis_eta(self, Z: np.array, M: np.array, inds, dists):
         """
         Z : N x T x n x d
         M : N x T
+        inds : list of indices to estimate
+        dists : columnwise distances
+
+        Returns:
+        etas : array of size N
+        """
+        N, T, _, _ = Z.shape
+        eta_len = N if self.eta_axis == 0 else T
+        etas = np.full([eta_len], np.nan)
+
+        axis_inds = inds[self.eta_axis]
+        unq_axis_inds = np.unique(axis_inds)
+
+        for i in range(unq_axis_inds):
+            etas[i] = self.search_eta(Z, M, i, dists)
+
+        return etas
+
+    def _col_eta(self, Z: np.array, M: np.array, inds, dists):
+        """
+        Z : N x T x n x d
+        M : N x T
+        inds : list of indices to estimate
+        dists : columnwise distances
 
         Returns:
         etas : array of size T
@@ -281,31 +327,45 @@ class NNImputer(object):
         _, T, _, _ = Z.shape
         etas = np.full([T], np.nan)
         for i in range(T):
-            # sample split for cv dists along columns
-            s_Mask = M.copy()
-            s_Mask[:, i] = 0
-            cv_dists = self.distances(Z, s_Mask, axis=0)
-
-            etas[i] = self.search_eta(Z, M, i, cv_dists)
+            # we do not sample split for time complexity reasons
+            # s_Mask = M.copy()
+            # s_Mask[:, i] = 0
+            # cv_dists = self.distances(Z, s_Mask, axis=0)
+            etas[i] = self.search_eta(Z, M, i, dists)
         return etas
 
     # TODO: support for user-item NN, block eta tuning
     def tune_transform(
-        self, Z: np.array, M: np.array, nn_type="ii", eta_axis=0, *args, **kwargs
+        self, Z: np.array, M: np.array, inds = None, eta_type = "axis", eta_axis=0, num_blocks = 2, *args, **kwargs
     ):
         """
-        Estimate the masked (M_ij = 0) entries of Z using distributional nearest neighbors.
+        Estimate the specified entries of Z using distributional nearest neighbors.
 
         Parameters:
         ----------
         Z : N x T x n x d tensor (type: np.array)
         M : N x T masking matrix (type: np.array)
-        nn_type : int (0 or 1), optional.
-               The axis to compute NN. If 0, row-row (user-user) NN is used.
-               If 1, col-col (item-item/time-time) NN is used. Default is 1.
+        inds : array-like of tuples (i, t) that index Z (optional)
+               Default: None. Represents the indices to be estimated by the algorithm.
+               Unmasked (M_it = 1) entries are used to estimate the entries in inds.
+               If inds = None, then all masked (M_it = 0) are estimated.
+        eta_type : string ("axis" or "block")
+                   if "axis", then an eta is tuned for each row/col (specified by eta_type).
+                   if "block", then an eta is tuned by splitting each
+        dists : array-like of shape (a, a) (optional)
+                a = N if self.nn_type is "uu" and a = T if self.nn_type is "ii"
+                Default: None. If None, then distances are computed prior to estimation
         eta_axis : int (0 or 1), optional
-                   The axis to compute etas. If 0, then etas are computed for every row.
-                   If 1, then etas are computed for every column.
+                   The axis to compute etas.
+                   Default is 0. 
+                   If eta_type = "axis".
+                   - If 0, then etas are computed for every row 
+                   - If 1, then etas are computed for every column.
+                   If eta_type = "block":
+                   - If 0 then Z is split row-wise into num_blocks sections
+                   - If 1 then Z is split col-wise into num_blocks sections 
+        num_blocks : the number of blocks to compute eta over. Default is 2.
+                     If eta_type = "axis", parameter is ignored.
         Returns:
         ----------
         Z_hat : N x T x n x d tensor (type np.array)
@@ -314,14 +374,22 @@ class NNImputer(object):
 
         N, T, n, d = Z.shape
 
-        full_dists = self.distances(Z, M, nn_type=nn_type)
+        if inds is None:
+            inds = np.nonzero(M == 1)
 
-        if eta_axis == 0:
-            etas = self._row_eta(Z, M)
-        elif eta_axis == 1:
-            etas = self._col_eta(Z, M)
+        full_dists = self.distances(Z, M, nn_type=self.nn_type)
 
-        Z_hat = self.estimate(Z, M, full_dists, etas, nn_type)
+        # axis type and row
+        if eta_type == "axis" and eta_axis == 0:
+            etas = self._row_eta(Z, M, inds)
+        elif eta_type == "axis" and eta_axis == 1:
+            etas = self._col_eta(Z, M, inds)
+        elif eta_type == "block" and eta_axis == 0:
+            etas = None
+        elif eta_type == "block" and eta_axis == 1:
+            etas == None
+
+        Z_hat = self.estimate(Z, M, full_dists, etas, self.nn_type)
 
         # compute distances using self.distances (default col).
         #  - distances should be sample split per row

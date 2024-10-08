@@ -30,7 +30,7 @@ class KernelNN(NNImputer):
                    Indicates which axis to compute the eta search over. If eta search is
                    done via blocks (i.e. not row-wise or column-wise), then this parameter is ignored
         eta_space : a hyperopt hp search space
-                    for example: hp.uniform('eta', 0, 1). If no eta_space is inputted,
+                    for example: hp.uniform('eta', 0, 1). If no eta_space is given,
                     then this example will be the default search space.
         search_algo : a hyperopt algorithm
                       for example: tpe.suggest, default is tpe.suggest.
