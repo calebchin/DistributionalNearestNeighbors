@@ -122,10 +122,10 @@ class NNImputer(object):
 
         Parameters:
         ----------
-        Z : N x T x n x d
-        M : N x T
+        Z : N x T x n x d data tensor
+        M : N x T masking matrix
         inds : scalar or 1d array like
-        dists : N x N or T x T (relies on search axis)
+        dists : N x N or T x T (relies on search axis) of row/col distances
         eta : the neighborhood threshold (radius)
 
         Returns:
@@ -144,8 +144,8 @@ class NNImputer(object):
             np.random.shuffle(sel_inds)
             fold_sels = np.array_split(sel_inds, k)
             
-            tot_error = 0
-            final_k = k
+            tot_error = np.full([k], np.nan)
+            # final_k = k
             for j in range(k):
                 cv_mask = M.copy()
                 cv_Z = Z.copy()
@@ -153,9 +153,9 @@ class NNImputer(object):
                 ground_truth = cv_Z[holdout_inds]
                 cv_Z[holdout_inds] = np.nan
                 cv_mask[holdout_inds] = 0
-                flattened_inds = []
-                for b in range(len(holdout_inds[0])):
-                    flattened_inds.append((holdout_inds[0][b], holdout_inds[1][b]))
+                flattened_inds = list(zip(holdout_inds[0], holdout_inds[1]))
+                # for b in range(len(holdout_inds[0])):
+                #     flattened_inds.append((holdout_inds[0][b], holdout_inds[1][b]))
                 cv_Z_est = self.estimate(
                     cv_Z, cv_mask, inds = flattened_inds, dists = dists, eta = eta
                 )
@@ -165,18 +165,9 @@ class NNImputer(object):
                 err = self.avg_error(
                     final_ests, ground_truth, inds=np.arange(0, len(holdout_inds[0]))
                 )
-            if not np.isnan(err):
-                notnan = True
-                tot_error += err
-            else:
-                final_k -= 1
-            # none of the folds returned nonnan error
-            if final_k == 0:
-                return np.inf
-                # currently discard folds with nan error
-            return tot_error / final_k
-
-
+                tot_error[j] = err 
+            return np.nanmean(tot_error)
+        
         # eta search per row (default)
         elif self.eta_axis == 0:
             obvs_inds = np.nonzero(M[inds] == 1)[0]
@@ -194,8 +185,7 @@ class NNImputer(object):
             k = self.k
         folds = np.array_split(obvs_inds, k, axis=0)
 
-        tot_error = 0
-        final_k = k
+        tot_error = np.full([k], np.nan)
         for j in range(k):
             cv_mask = M.copy()
             cv_Z = Z.copy()
@@ -226,18 +216,8 @@ class NNImputer(object):
             err = self.avg_error(
                 final_ests, ground_truth, inds=np.arange(0, len(folds_inds))
             )
-
-            # TODO: think about this behavior - if fold error is nan, what to do?
-            if not np.isnan(err):
-                notnan = True
-                tot_error += err
-            else:
-                final_k -= 1
-            # none of the folds returned nonnan error
-        if final_k == 0:
-            return np.inf
-            # currently discard folds with nan error
-        return tot_error / final_k
+            tot_error[j] = err
+        return np.nanmean(tot_error)
 
     def search_eta(
         self,
@@ -263,8 +243,9 @@ class NNImputer(object):
                inds indexes into axis specified by s. If 1d array, then len(inds) rows/cols
                are selected for cross-validation.
         dists : distances between rows/cols.
-
-        TBC ....
+        max_evals : the maximum number of values to test in the eta search, default 200.
+        ret_trials : boolean, whether to return the hyperopt trials object or not.
+        verbose : boolean, whether to print the search progress or not.
         """
 
         def obj(eta):
@@ -334,7 +315,7 @@ class NNImputer(object):
             etas[i] = self.search_eta(Z, M, i, dists)
         return etas
 
-    # TODO: support for user-item NN, block eta tuning
+    # TODO: UNDER CONSTRUCTION
     def tune_transform(
         self, Z: np.array, M: np.array, inds = None, eta_type = "axis", eta_axis=0, num_blocks = 2, *args, **kwargs
     ):

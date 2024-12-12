@@ -26,9 +26,9 @@ class KernelNN(NNImputer):
             represents the type of nearest neighbors to use
             "ii" is "item-item" nn, which is column-wise
             "uu" is "user-user" nn, which is row-wise
-        eta_axis : integer in [0, 1].
-                   Indicates which axis to compute the eta search over. If eta search is
-                   done via blocks (i.e. not row-wise or column-wise), then this parameter is ignored
+        eta_axis : integer in [-1, 0, 1].
+                   Indicates which axis to compute the eta search over. If -1, then eta search is
+                   done via blocks (i.e. not row-wise or column-wise).
         eta_space : a hyperopt hp search space
                     for example: hp.uniform('eta', 0, 1). If no eta_space is given,
                     then this example will be the default search space.
@@ -67,12 +67,12 @@ class KernelNN(NNImputer):
               The first and last dimensions of dat1 and dat2 must be the same.
         dat2 : N x n x d data matrix coming from second d dim distribution
               If dat2 is shape (n, d) then shape (1, n, d) is assumed.
-        kernel : k(x, y) that defines MMD_k^2
 
         Returns:
         --------
         Mean MMD_k^2 estimator between datasets with N entries (N = 1 is a single cell)
         """
+        #print(dat1.shape)
         if len(dat1.shape) == 2:
             dat1 = dat1[None, :]
             dat2 = dat2[None, :]
@@ -140,6 +140,7 @@ class KernelNN(NNImputer):
         eta : the threshold for the neighborhood
         inds : an array-like of indices into Z that will be estimated
         dists : the row/column distances of Z
+        ret_nn : boolean, whether to return the neighbors or not
 
         Returns:
         --------
@@ -149,8 +150,7 @@ class KernelNN(NNImputer):
         """
         N, T, n, d = Z.shape
         Z_cp = Z.copy()
-        Z_cp[M == 0] = np.nan
-        Z_cp[M == 2] = np.nan
+        Z_cp[M != 1] = np.nan
         # ii -> dists are cols, avg across row
         # ASSUMPTION: in ii, inds are from a row. in uu, inds are from a col
         # TODO: should be able to relax this
@@ -243,19 +243,12 @@ class KernelNN(NNImputer):
         --------
         err : avg mmd^2 error over len(truth) entries
         """
-        err = 0
+        err = np.full([len(inds)], np.nan)
         num_val = len(inds)
-        for val in inds:
+        for i, val in enumerate(inds):
             est_val = ests[val]
-            if np.any(np.isinf(est_val * -1)):
-                # print("No neighbors")
-                err_onecell = np.nan
-            else:
+            #print(est_val.shape)
+            if not np.any(np.isinf(est_val * -1)):
                 err_onecell = self._sqmmd_est2(est_val, truth[val])
-            if ~np.isnan(err_onecell):
-                err += err_onecell
-            else:
-                num_val -= 1
-        if num_val == 0:
-            return np.nan
-        return err / num_val
+                err[i] = err_onecell
+        return np.nanmean(err)
